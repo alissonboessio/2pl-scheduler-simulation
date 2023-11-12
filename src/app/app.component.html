@@ -1,0 +1,40 @@
+
+<p>{{ title }}</p>
+
+@for (trans of transactions; track $index) {
+    <mat-checkbox class="example-margin"></mat-checkbox>
+
+    @for (step of trans.steps; track $index) {
+        <span>
+            {{ step.what }}{{trans.id}}
+            @if (step.what != 'c') {
+                [{{step.variable}}]
+            }
+        </span>
+    }
+    <br>
+}
+
+<br>
+
+<button (click)="buildHistory(transactions2)">click</button>
+
+<br>
+
+@if (initialHistory.step.length > 0 ) {
+
+    <p>initial history</p>
+
+    @for (historyStep of initialHistory.step; track $index) {
+        @for (step of historyStep | keyvalue;  track $index) {
+            <span>{{step.value.what}}{{step.key}}
+                @if (step.value.what != 'c') {
+                    [{{step.value.variable}}]
+                }
+            </span> -
+        }
+        
+    }
+}
+
+<router-outlet></router-outlet>
