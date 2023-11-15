@@ -2,6 +2,10 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
 import {MatCheckboxModule} from '@angular/material/checkbox';
+import {MatCardModule} from '@angular/material/card';
+import {MatButtonModule} from '@angular/material/button';
+import {MatDividerModule} from '@angular/material/divider';
+import { FormsModule } from '@angular/forms'
 
 type Transaction = {
   id: number;
@@ -9,8 +13,9 @@ type Transaction = {
   committed: boolean;
   locks: Set<string>;
   steps: Array<DataManipulation>;
+  selected: boolean;
 };
-
+ 
 type DataManipulation = {
   what: "r" | "w" | "c";
   variable?: string;
@@ -30,6 +35,7 @@ enum ActionType {
   Delay = 'Delay',
   Commit = 'c',
   Abort = 'Abort',
+  DeadLock = 'DeadLock',
   Read = 'r',
   Write = 'w',
 }
@@ -37,13 +43,11 @@ enum ActionType {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, MatCheckboxModule],
+  imports: [CommonModule, RouterOutlet, MatCheckboxModule, FormsModule, MatCardModule,MatButtonModule, MatDividerModule],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.scss']
 })
 export class AppComponent {
-  title = 'scheduler-simm-2pl';
-
   initialHistory : history = { step: [] };
   lockManager: { [variable: string]: { transactionId: number; isShared: boolean } } = {};
   executionHistory: Array<{ transactionId: number; action: ActionType; variable?: string }> = [];
@@ -59,7 +63,8 @@ export class AppComponent {
         { variable: "x", what: 'w' },
         { variable: "y", what: 'w' },
         { what: 'c' },
-      ]
+      ],
+      selected: false
     },  
     {
       id: 2,
@@ -70,7 +75,8 @@ export class AppComponent {
         { variable: "x", what: 'r' },
         { variable: "x", what: 'w' },
         { what: 'c' },
-      ]
+      ],
+      selected: false
     },  
     {
       id: 3,
@@ -81,7 +87,8 @@ export class AppComponent {
         { variable: "y", what: 'r' },
         { variable: "y", what: 'r' },
         { what: 'c' },
-      ]
+      ],
+      selected: false
     },
     {
       id: 4,
@@ -92,43 +99,31 @@ export class AppComponent {
         { variable: "y", what: 'w' },
         { variable: "x", what: 'r' },
         { what: 'c' },
-      ]
+      ],
+      selected: false
     }
   ]
-  
-  transactions2: Array<Transaction> = [
-    {
-     id: 1,
-     delay: false,
-     committed: false,
-     locks: new Set(),
-     steps: [
-       { variable: "x", what: 'w', executed: false },
-       { variable: "y", what: 'w', executed: false },
-       { what: 'c', executed: false },
-     ]
-   },  
-   {
-     id: 2,
-     delay: false,
-     committed: false,
-     locks: new Set(),
-     steps: [
-       { variable: "x", what: 'r', executed: false },
-       { variable: "x", what: 'w', executed: false },
-       { what: 'c', executed: false },
-     ]
-   },   
-  ]
+
+  transactionsSelected : Array<Transaction> = []
+
+  onClick(){
+    this.transactionsSelected = []
+
+    this.transactionsSelected = JSON.parse(JSON.stringify(this.transactions.filter(t => t.selected)))
+    this.transactionsSelected.forEach(t => t.locks = new Set())
+    if (this.transactionsSelected.length > 0) {
+      this.buildHistory(this.transactionsSelected)
+    }
+    
+  }
 
   resetState() {
     this.executionHistory = [];
     this.lockManager = {};
-    this.transactions.forEach((transaction) => {
-      transaction.locks.clear();
-    });
+    this.allExecuted = false;
+    this.initialHistory = { step: [] }; 
   }
-
+ 
   buildHistory(transactions: Array<Transaction>) {   
     this.resetState();
 
@@ -172,45 +167,110 @@ export class AppComponent {
       const step = stepRecord[transactionId];
 
       if(!step.executed){
-        const transaction = this.transactions.find((t) => t.id === +transactionId);
+        const transaction = this.transactionsSelected.find((t) => t.id === +transactionId);
 
-      if (transaction) {
-        if (step.what === 'r' || step.what === 'w') {
-          // Tenta adquirir bloqueio
-          if (!this.acquireLock(transaction, <string>step.variable, step.what === 'r')) {
-            // esta em delay
-            this.executionHistory.push({
-              transactionId: transaction.id,
-              action: ActionType.Delay,
-              variable: step.variable,
-            });
-
-          }else {
-            stepRecord[transactionId].executed = true
+        if (transaction) {          
+          if(!transaction.delay){
+            if (step.what === 'r' || step.what === 'w') {
+              // Tenta adquirir bloqueio
+              if (!this.acquireLock(transaction, <string>step.variable, step.what === 'r')) {
+                // esta em delay
+                this.executionHistory.push({
+                  transactionId: transaction.id,
+                  action: ActionType.Delay,
+                  variable: step.variable,
+                });
+                transaction.delay = true
+  
+              }else {
+                stepRecord[transactionId].executed = true
+              }
+            } else if (step.what === 'c') {
+              // libera os bloqueios
+  
+              transaction.locks.forEach((variable) => {
+                this.releaseLock(variable);
+                this.cleanDelays(variable);
+              });
+              transaction.locks = new Set();
+  
+              this.executionHistory.push({
+                transactionId: transaction.id,
+                action: ActionType.Commit,
+              });
+              transaction.committed = true
+              transaction.delay = false
+              stepRecord[transactionId].executed = true
+  
+              this.executeTransactions();
+  
+            }
+          }else {            
+            if(this.transactionsSelected.filter(tr => !tr.committed).every(t => t.delay)){
+             
+              this.handleDeadlock();
+              this.executionHistory.push({
+                transactionId: transaction.id,
+                action: ActionType.DeadLock
+              });
+              this.executeTransactions();
+              
+            }
           }
-        } else if (step.what === 'c') {
-          // libera os bloqueios        
-          transaction.locks.forEach((variable) => {
-            this.releaseLock(variable);
-           
-          });
-          this.executionHistory.push({
-            transactionId: transaction.id,
-            action: ActionType.Commit,
-          });
           
-          stepRecord[transactionId].executed = true
-
-          this.executeTransactions();
-
         }
       }
-      }
-
       
     });
 
     this.allExecuted = true;
+    
+  }
+
+  cleanDelays(variable : string){
+    this.initialHistory.step.forEach((stepRecord) => {   
+      
+      const transactionId = <number><unknown>Object.keys(stepRecord)[0];
+      const step = stepRecord[transactionId];
+      
+      if (!step.executed && step.variable === variable) {
+        const transaction = this.transactionsSelected.find((t) => t.id === +transactionId && t.delay)
+       
+        transaction ? transaction.delay = false : null;  
+
+      }
+    })
+  }
+
+  handleDeadlock(){
+    let retryCommited = this.transactionsSelected.filter(t => !t.committed && t.delay)[0];
+    let unCommittedTransactions = this.transactionsSelected.filter(t => !t.committed && t.delay);
+    unCommittedTransactions.shift()
+
+    this.initialHistory.step.forEach((stepRecord) => {     
+
+      const transactionId = <number><unknown>Object.keys(stepRecord)[0];
+
+      unCommittedTransactions.forEach(uT => {
+        this.executionHistory = this.executionHistory.filter(eH => eH.transactionId != uT.id)
+        
+        if(uT.id === transactionId){
+          const step = stepRecord[transactionId];
+          step.executed = false
+        }
+
+        uT.locks.forEach(variable => {
+          this.releaseLock(variable)
+        })
+                
+        uT.delay = true;
+        uT.locks = new Set();
+      })
+
+    })
+   
+    retryCommited.delay = false
+
   }
 
   acquireLock(transaction: Transaction, variable: string, isShared: boolean = false): boolean {
@@ -219,7 +279,7 @@ export class AppComponent {
     if (!currentLock) {
       // nao existe bloqueio, entao cria um novo
       this.lockManager[variable] = { transactionId: transaction.id, isShared };
-      transaction.locks.add(variable, );
+      transaction.locks.add(variable);
       const actionType = isShared ? ActionType.AcquireSharedLock : ActionType.AcquireExclusiveLock;
       this.executionHistory.push({
         transactionId: transaction.id,
@@ -303,7 +363,7 @@ export class AppComponent {
   }
 
   getTransactionStr(transaction : Transaction){
-  
+       
     let stpStr : string = "";
 
     transaction.steps.forEach(step => {
