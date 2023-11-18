@@ -1,10 +1,10 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet } from '@angular/router';
-import {MatCheckboxModule} from '@angular/material/checkbox';
-import {MatCardModule} from '@angular/material/card';
-import {MatButtonModule} from '@angular/material/button';
-import {MatDividerModule} from '@angular/material/divider';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatCardModule } from '@angular/material/card';
+import { MatButtonModule } from '@angular/material/button';
+import { MatDividerModule } from '@angular/material/divider';
 import { FormsModule } from '@angular/forms'
 
 type Transaction = {
@@ -187,6 +187,11 @@ export class AppComponent {
               }
             } else if (step.what === 'c') {
               // libera os bloqueios
+
+              this.executionHistory.push({
+                transactionId: transaction.id,
+                action: ActionType.Commit,
+              });
   
               transaction.locks.forEach((variable) => {
                 this.releaseLock(variable);
@@ -194,10 +199,7 @@ export class AppComponent {
               });
               transaction.locks = new Set();
   
-              this.executionHistory.push({
-                transactionId: transaction.id,
-                action: ActionType.Commit,
-              });
+              
               transaction.committed = true
               transaction.delay = false
               stepRecord[transactionId].executed = true
